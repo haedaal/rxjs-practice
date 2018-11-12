@@ -74,30 +74,72 @@ let workerLock = workerLockSubject.asObservable().pipe(
   map((v, i) => `L_${i}`)
 );
 
-let latestRequest = workerLock.pipe(
-  withLatestFrom(mouseEvents),
-  map(v => v[1]),
+interface LockStatus {
+  free: boolean;
+  lastLock: string;
+  lastJob: string;
+  fire: boolean;
+}
+
+let workerRequest = mouseEvents.pipe(
+  combineLatest(workerLock),
+  scan<[string, string], LockStatus>(
+    (acc, v) => {
+      let { free, lastLock, lastJob } = acc;
+      let [event, lock] = v;
+      if (lastLock != lock) {
+        // new lock available
+        if (lastJob != event) {
+          console.log("case1");
+          // fire
+          return {
+            free: false,
+            lastLock: lock,
+            lastJob: event,
+            fire: true
+          };
+        } else {
+          console.log("case2");
+          // idle
+          return {
+            free: true,
+            lastLock: lock,
+            lastJob: lastJob,
+            fire: false
+          };
+        }
+      } else {
+        // assert(lastEv != event);
+        if (free) {
+          console.log("case3");
+          return {
+            free: false,
+            lastLock: lock,
+            lastJob: event,
+            fire: true
+          };
+        } else {
+          console.log("case4");
+          return {
+            free: false,
+            lastLock: lock,
+            lastJob: lastJob,
+            fire: false
+          };
+        }
+      }
+    },
+    {
+      free: true,
+      lastLock: undefined,
+      lastJob: undefined,
+      fire: false
+    }
+  ),
+  filter(v => v.fire),
+  map(v => v.lastJob),
   share()
 );
-
-let initialRequest = mouseEvents.pipe(
-  withLatestFrom(workerLock),
-  distinctUntilChanged((x, y) => x[1] === y[1]),
-  map(v => v[0]),
-  share()
-);
-
-let workerRequest = latestRequest.pipe(
-  merge(initialRequest),
-  distinctUntilChanged(),
-  share()
-);
-
-// let workerRequest = mouseEvents.pipe(
-//   combineLatest(workerLock, (v1, v2) => v1),
-//   distinctUntilChanged(),
-//   share()
-// );
 
 let workerJobStart = workerRequest.pipe(
   zip(workerLock, (v1, v2) => v1),
@@ -112,8 +154,6 @@ workerJobDone.subscribe(_ => workerLockSubject.next());
 
 createAttachPush(mouseEvents);
 createAttachPush(workerLock);
-createAttachPush(initialRequest);
-createAttachPush(latestRequest);
 createAttachPush(workerRequest);
 createAttachPush(workerJobStart);
 createAttachPush(workerJobDone);
